@@ -1,0 +1,6 @@
+# Dependencias de ejecución — solo se requiere la biblioteca estándar.
+# pytest es necesario para ejecutar la suite de pruebas.
+pytest>=7.0
+
+# Opcional: instalar para generar gráficas del benchmark.
+# matplotlib>=3.5
