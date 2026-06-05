@@ -41,15 +41,15 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from src.ec import SECP256K1
+from src.ec import SECP256K1, Curve
 from src import ecdsa, ec_kcdsa
 
 CURVE = SECP256K1
 
 # Defaults
 DEFAULT_SIZES = [64, 256, 1_024, 4_096, 16_384, 65_536]
-DEFAULT_REPS  = 20
-DEFAULT_WARMUP = 3
+DEFAULT_REPS  = 1000   # más repeticiones → mínimo más estable (el ruido solo suma)
+DEFAULT_WARMUP = 5    # llena cachés de CPU y resuelve atributos antes de medir
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -315,10 +315,159 @@ def print_analysis(er: dict, kr: dict, sizes: list[int]):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Conteo de operaciones de curva  (métrica independiente del hardware)
+# ──────────────────────────────────────────────────────────────────────
+
+class CountingCurve:
+    """Envoltura sobre una :class:`Curve` que cuenta las operaciones de curva
+    de *alto nivel* que invoca un algoritmo: multiplicaciones escalares
+    (``mul``) y sumas de puntos (``add``).
+
+    Como cada llamada se delega a la curva real, las sumas internas que
+    ``mul`` realiza por debajo (doble-y-suma) NO se contabilizan: se cuenta
+    únicamente lo que el algoritmo pide de forma explícita.  Esa es justamente
+    la métrica algorítmica — independiente del intérprete y del hardware.
+
+    Reenvía cualquier otro atributo (``n``, ``G``, ``p``, ``name`` …) a la
+    curva subyacente mediante ``__getattr__``.
+    """
+
+    def __init__(self, curve: Curve):
+        self._curve = curve
+        self.muls = 0
+        self.adds = 0
+
+    def reset(self) -> None:
+        self.muls = 0
+        self.adds = 0
+
+    def mul(self, k: int, P):
+        self.muls += 1
+        return self._curve.mul(k, P)
+
+    def add(self, P, Q):
+        self.adds += 1
+        return self._curve.add(P, Q)
+
+    def __getattr__(self, name):
+        # Solo se invoca si el atributo no existe en la instancia (delegación).
+        return getattr(self._curve, name)
+
+
+def count_curve_ops() -> dict:
+    """Cuenta multiplicaciones escalares y sumas de puntos por operación.
+
+    El tamaño del mensaje no influye en estas cifras (solo cambia el coste de
+    hashing, que no es una operación de curva), de modo que basta un mensaje.
+    """
+    msg = b"op-count probe"
+
+    cc = CountingCurve(CURVE)
+    out: dict = {"ECDSA": {}, "EC-KCDSA": {}}
+
+    # ── ECDSA ───────────────────────────────────────────────────────────
+    cc.reset(); d, Q = ecdsa.keygen(cc);              out["ECDSA"]["keygen"] = (cc.muls, cc.adds)
+    cc.reset(); sig = ecdsa.sign(msg, d, cc);          out["ECDSA"]["sign"]   = (cc.muls, cc.adds)
+    cc.reset(); ecdsa.verify(msg, sig, Q, cc);         out["ECDSA"]["verify"] = (cc.muls, cc.adds)
+
+    # ── EC-KCDSA ────────────────────────────────────────────────────────
+    cc.reset(); d, Q, h = ec_kcdsa.keygen(cc);         out["EC-KCDSA"]["keygen"] = (cc.muls, cc.adds)
+    cc.reset(); sig = ec_kcdsa.sign(msg, d, h, cc);    out["EC-KCDSA"]["sign"]   = (cc.muls, cc.adds)
+    cc.reset(); ec_kcdsa.verify(msg, sig, Q, h, cc);   out["EC-KCDSA"]["verify"] = (cc.muls, cc.adds)
+
+    return out
+
+
+def print_op_counts(oc: dict):
+    """Imprime el conteo de operaciones de curva por algoritmo y operación."""
+    def cell(t: tuple[int, int]) -> str:
+        m, a = t
+        return f"{m} mul, {a} add"
+
+    print("─" * 60)
+    print("  Operaciones de curva por operación  (independiente del HW)")
+    print("─" * 60)
+    print(f"\n  {'':<8} │ {'ECDSA':^16} │ {'EC-KCDSA':^16}")
+    print(f"  {'─'*8}─┼─{'─'*16}─┼─{'─'*16}")
+    for op in ("keygen", "sign", "verify"):
+        print(f"  {op:<8} │ {cell(oc['ECDSA'][op]):^16} │ {cell(oc['EC-KCDSA'][op]):^16}")
+    print(
+        "\n  Nota: solo se cuentan operaciones de CURVA.  El menor tiempo de\n"
+        "  EC-KCDSA en firma/verificación se debe además a que evita las\n"
+        "  inversiones modulares k⁻¹ (firma) y s⁻¹ (verificación) que ECDSA sí\n"
+        "  necesita — un coste de campo, no de curva, no reflejado en esta tabla."
+    )
+    print()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Tamaño de claves y firmas
+# ──────────────────────────────────────────────────────────────────────
+
+def measure_sizes() -> dict:
+    """Mide el tamaño serializado (bytes) de claves y firmas de cada algoritmo.
+
+    Se usan codificaciones de ancho fijo derivadas de los parámetros de la
+    curva (lo que hace una implementación real), no la longitud del entero de
+    una instancia concreta (que varía ±1 byte según los ceros a la izquierda).
+    """
+    field_bytes  = (CURVE.p.bit_length() + 7) // 8   # tamaño de coordenada en F_p
+    scalar_bytes = (CURVE.n.bit_length() + 7) // 8   # tamaño de escalar mod n
+
+    # Una firma real de cada algoritmo para leer la longitud de r (EC-KCDSA).
+    d_e, Q_e = ecdsa.keygen(CURVE)
+    ecdsa.sign(b"size probe", d_e, CURVE)            # round-trip de cordura implícito
+    d_k, Q_k, h_cert = ec_kcdsa.keygen(CURVE)
+    r_k, _s_k = ec_kcdsa.sign(b"size probe", d_k, h_cert, CURVE)
+
+    return {
+        "field_bytes":  field_bytes,
+        "scalar_bytes": scalar_bytes,
+        "ECDSA": {
+            "priv":           scalar_bytes,
+            "pub_uncompressed": 1 + 2 * field_bytes,   # 0x04 ‖ x ‖ y
+            "pub_compressed":   1 + field_bytes,       # 0x02/03 ‖ x
+            "sig":            2 * scalar_bytes,         # (r, s): dos escalares
+        },
+        "EC-KCDSA": {
+            "priv":           scalar_bytes,
+            "pub_uncompressed": 1 + 2 * field_bytes,
+            "pub_compressed":   1 + field_bytes,
+            "sig":            len(r_k) + scalar_bytes,  # r = H(x₁) (l_H) ‖ s (escalar)
+            "h_cert":         len(h_cert),              # hash de certificado (param.)
+            "r_len":          len(r_k),
+        },
+    }
+
+
+def print_sizes(sz: dict):
+    """Imprime la tabla comparativa de tamaños serializados."""
+    e, k = sz["ECDSA"], sz["EC-KCDSA"]
+    print("─" * 60)
+    print("  Tamaños serializados  (bytes)")
+    print("─" * 60)
+    print(f"\n  {'Elemento':<22} │ {'ECDSA':^7} │ {'EC-KCDSA':^9}")
+    print(f"  {'─'*22}─┼─{'─'*7}─┼─{'─'*9}")
+    print(f"  {'Clave privada d':<22} │ {e['priv']:^7} │ {k['priv']:^9}")
+    print(f"  {'Clave pública (compr.)':<22} │ {e['pub_compressed']:^7} │ {k['pub_compressed']:^9}")
+    print(f"  {'Clave pública (sin c.)':<22} │ {e['pub_uncompressed']:^7} │ {k['pub_uncompressed']:^9}")
+    print(f"  {'Firma (r ‖ s)':<22} │ {e['sig']:^7} │ {k['sig']:^9}")
+    print(f"  {'h_cert (parámetro)':<22} │ {'—':^7} │ {k['h_cert']:^9}")
+    print(
+        f"\n  La componente r de EC-KCDSA es un hash de longitud fija l_H = "
+        f"{k['r_len']} bytes,\n"
+        f"  mientras que la r de ECDSA es un escalar de {sz['scalar_bytes']} "
+        f"bytes (crece con la curva).\n"
+        f"  En {CURVE.name} ({CURVE.bits} bits) ambas firmas coinciden en tamaño."
+    )
+    print()
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Optional matplotlib chart
 # ──────────────────────────────────────────────────────────────────────
 
-def try_plot(er: dict, kr: dict, sizes: list[int], out: str = "benchmark_results.png"):
+def try_plot(er: dict, kr: dict, sizes: list[int], reps: int, out: str = "benchmark_results.png"):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -370,7 +519,7 @@ def try_plot(er: dict, kr: dict, sizes: list[int], out: str = "benchmark_results
 
     fig.suptitle(
         f"ECDSA vs EC-KCDSA — {CURVE.name}, SHA-256\n"
-        f"(Python from-scratch,  {DEFAULT_REPS} repeticiones)",
+        f"(Python from-scratch,  {reps} repeticiones,  métrica = mínimo)",
         fontsize=12,
     )
     plt.tight_layout()
@@ -440,9 +589,11 @@ def main():
 
     print_table(er, kr, sizes)
     print_analysis(er, kr, sizes)
+    print_op_counts(count_curve_ops())
+    print_sizes(measure_sizes())
 
     if not args.no_plot:
-        try_plot(er, kr, sizes, out=args.plot_out)
+        try_plot(er, kr, sizes, reps=args.reps, out=args.plot_out)
 
 
 if __name__ == "__main__":
