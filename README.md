@@ -48,17 +48,15 @@ ECDSA-vs-EC-KCDSA/
 │   │   ├── ecdsa.py       # Implementación de ECDSA
 │   │   └── ec_kcdsa.py    # Implementación de EC-KCDSA
 │   ├── tests/
-│   │   ├── test_ec.py         # Tests de aritmética de curvas (40 tests)
-│   │   ├── test_ecdsa.py      # Tests de ECDSA (38 tests)
-│   │   └── test_ec_kcdsa.py   # Tests de EC-KCDSA (36 tests)
+│   │   ├── test_ec.py         # Tests de aritmética de curvas
+│   │   ├── test_ecdsa.py      # Tests de ECDSA
+│   │   └── test_ec_kcdsa.py   # Tests de EC-KCDSA
 │   ├── main.py            # Demo interactivo de ambos algoritmos
 │   ├── benchmark.py       # Benchmark de rendimiento con N variable
 │   ├── conftest.py        # Configuración de pytest
 │   └── requirements.txt
 └── docs/
-    ├── Reporte-Seguridad-ECC.md      # Reporte teórico completo
-    ├── Reporte-Seguridad-ECC.pdf     # Reporte teórico (PDF original)
-    └── Revision-Implementacion.md    # Verificación código vs. algoritmos
+    └── benchmark_results.png  # Gráfica generada por benchmark.py
 ```
 
 ---
@@ -79,7 +77,7 @@ Muestra generación de claves, firma, verificación y tabla comparativa de propi
 Desde el directorio `codes/`:
 
 ```bash
-# Todos los tests (114 en total)
+# Todos los tests
 pytest tests/ -v
 
 # Solo tests de aritmética de curvas
@@ -138,10 +136,3 @@ El benchmark mide keygen, sign y verify para mensajes de tamaño `[64, 256, 1024
 | `P-256` (secp256r1) | 256 | TLS 1.3, FIPS 186-5 |
 
 Los tests corren sobre ambas curvas automáticamente via fixtures parametrizadas de pytest.
-
----
-
-## Documentación
-
-- `docs/Reporte-Seguridad-ECC.md` — fundamento teórico completo: definiciones de grupo, logaritmo discreto, ley de grupo de curvas elípticas, algoritmos ECDSA y EC-KCDSA, análisis de seguridad GMR y vulnerabilidades.
-- `docs/Revision-Implementacion.md` — tabla de verificación paso a paso del código contra los algoritmos del reporte.
