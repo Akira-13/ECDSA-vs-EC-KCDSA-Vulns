@@ -1,138 +1,124 @@
-# ECDSA vs EC-KCDSA
+# Laboratorio CTF: Vulnerabilidades en Firmas de Curvas Elípticas
 
-Implementación **from scratch** en Python de dos algoritmos de firma digital basados en curvas elípticas, con benchmark de rendimiento y análisis de seguridad comparativo.
+Este repositorio contiene un entorno de laboratorio estilo CTF (Capture The Flag) diseñado para demostrar vulnerabilidades críticas en la implementación de algoritmos de firma digital basados en curvas elípticas, específicamente **ECDSA** y **EC-KCDSA** sobre la curva `secp256k1`.
 
-| Algoritmo | Estándar | Origen |
-|---|---|---|
-| ECDSA | FIPS 186-5 / ANSI X9.62 | EE.UU. (NIST) |
-| EC-KCDSA | ISO/IEC 15946-2 / TTAK.KO-12.0015 | Corea del Sur |
+El objetivo de estos retos es explotar la mala gestión del número efímero (o *nonce*) $k$, demostrando cómo su reutilización o filtración conduce a la recuperación total de la clave privada $d$.
 
----
 
-## Requisitos
+## Configuración y Despliegue (Setup)
 
-- Python 3.8 o superior (se usa `pow(a, -1, m)` para inversas modulares)
-- pip
+### Requisitos Previos
 
-Dependencias del proyecto:
+* [Docker](https://docs.docker.com/get-docker/) y [Docker Compose](https://docs.docker.com/compose/install/)
+* Python 3.8+ (para ejecutar el solver)
+* Librería `pwntools` (instalable vía `pip install pwntools`)
 
-```
-pytest >= 7.0
-matplotlib >= 3.5   # opcional, solo para gráficas del benchmark
-```
+### Levantar los Oráculos (Servidores)
 
----
-
-## Instalación
+El laboratorio utiliza contenedores aislados con `socat` para simular conexiones de red reales. Para construir y levantar todos los retos en segundo plano, ejecuta en la raíz del proyecto:
 
 ```bash
-git clone <url-del-repositorio>
-cd ECDSA-vs-EC-KCDSA/codes
-
-pip install pytest
-# Opcional, para gráficas:
-pip install matplotlib
-```
-
-No se requiere ninguna librería criptográfica externa. Toda la aritmética de curvas elípticas está implementada desde cero en `codes/src/ec.py`.
-
----
-
-## Estructura del proyecto
+docker-compose up --build -d
 
 ```
-ECDSA-vs-EC-KCDSA/
-├── codes/
-│   ├── src/
-│   │   ├── ec.py          # Aritmética de curvas elípticas (secp256k1, P-256)
-│   │   ├── ecdsa.py       # Implementación de ECDSA
-│   │   └── ec_kcdsa.py    # Implementación de EC-KCDSA
-│   ├── tests/
-│   │   ├── test_ec.py         # Tests de aritmética de curvas
-│   │   ├── test_ecdsa.py      # Tests de ECDSA
-│   │   └── test_ec_kcdsa.py   # Tests de EC-KCDSA
-│   ├── main.py            # Demo interactivo de ambos algoritmos
-│   ├── benchmark.py       # Benchmark de rendimiento con N variable
-│   ├── conftest.py        # Configuración de pytest
-│   └── requirements.txt
-└── docs/
-    └── benchmark_results.png  # Gráfica generada por benchmark.py
-```
 
----
+Esto expondrá los siguientes puertos en tu máquina local (`localhost`):
 
-## Ejecutar el demo
+* **Puerto 2001:** ECDSA - Reutilización de Nonce
+* **Puerto 2002:** ECDSA - Filtración de Nonce
+* **Puerto 2003:** EC-KCDSA - Reutilización de Nonce
+* **Puerto 2004:** EC-KCDSA - Filtración de Nonce
+
+Puedes interactuar manualmente con cualquiera de los retos usando `netcat`:
 
 ```bash
-cd codes/
-python main.py
+nc localhost 2001
+
 ```
 
-Muestra generación de claves, firma, verificación y tabla comparativa de propiedades para ambos algoritmos sobre secp256k1.
+### Ejecutar el Exploit Automático
 
----
-
-## Ejecutar los tests
-
-Desde el directorio `codes/`:
+El archivo `solvers.py` contiene los scripts para solucionar los cuatro desafíos. Para ejecutar el ataque completo y capturar las *flags*:
 
 ```bash
-# Todos los tests
-pytest tests/ -v
-
-# Solo tests de aritmética de curvas
-pytest tests/test_ec.py -v
-
-# Solo tests de ECDSA
-pytest tests/test_ecdsa.py -v
-
-# Solo tests de EC-KCDSA
-pytest tests/test_ec_kcdsa.py -v
-
-# Un test específico
-pytest tests/test_ec.py::test_orden_secp256k1 -v
-```
-
-Salida esperada:
+python3 exploit.py
 
 ```
-114 passed in ~1.5s
-```
 
----
+## 🦠 Explicación de las Vulnerabilidades
 
-## Ejecutar el benchmark
+En los algoritmos de firma de curvas elípticas, el valor $k$ (nonce o secreto efímero) debe ser un número aleatorio, impredecible y **estrictamente de un solo uso**. Si estas reglas se rompen, la seguridad de todo el esquema colapsa. El orden del subgrupo de la curva se denota como $n$, y todas las operaciones se realizan en módulo $n$.
 
-```bash
-cd codes/
-python benchmark.py
-```
+### 1. ECDSA: Reutilización de Nonce ($k$)
 
-Opciones disponibles:
+Si se firman dos mensajes diferentes ($m_1$ y $m_2$) usando el mismo valor de $k$, el punto efímero $R = k \cdot G$ será el mismo, por lo que la componente $r$ de la firma será idéntica en ambos casos.
 
-```bash
-# Personalizar repeticiones y tamaños de mensaje
-python benchmark.py --reps 30 --sizes 64,1024,65536
+Las ecuaciones para las dos firmas ($s_1$ y $s_2$) son:
 
-# Sin gráfica
-python benchmark.py --no-plot
 
-# Guardar gráfica en ruta personalizada
-python benchmark.py --plot-out resultados.png
+$$s_1 = k^{-1}(e_1 + d \cdot r) \pmod n$$
 
-# Ver todas las opciones
-python benchmark.py --help
-```
+$$s_2 = k^{-1}(e_2 + d \cdot r) \pmod n$$
 
-El benchmark mide keygen, sign y verify para mensajes de tamaño `[64, 256, 1024, 4096, 16384, 65536]` bytes, con 20 repeticiones y 3 de calentamiento por defecto. La gráfica se guarda como `benchmark_results.png`.
+Restando ambas ecuaciones, la clave privada $d$ se anula, permitiéndonos despejar el valor del nonce $k$:
 
----
 
-## Curvas soportadas
+$$k = (e_1 - e_2) \cdot (s_1 - s_2)^{-1} \pmod n$$
 
-| Curva | p (bits) | Uso |
-|---|---|---|
-| `secp256k1` | 256 | Bitcoin, Ethereum |
-| `P-256` (secp256r1) | 256 | TLS 1.3, FIPS 186-5 |
+Una vez obtenido $k$, podemos despejar la clave privada $d$ de cualquiera de las firmas originales:
 
-Los tests corren sobre ambas curvas automáticamente via fixtures parametrizadas de pytest.
+
+$$d = (s_1 \cdot k - e_1) \cdot r^{-1} \pmod n$$
+
+### 2. ECDSA: Filtración de Nonce ($k$)
+
+Si por un error de implementación (logs, fallos de canal lateral, generadores de números pseudoaleatorios predecibles) el atacante conoce el valor de $k$ utilizado para una firma específica $(r, s)$, el ataque es trivial.
+
+Tomando la ecuación base y multiplicando por $k$, obtenemos:
+
+
+$$s \cdot k = e + d \cdot r \pmod n$$
+
+Simplemente despejamos la clave privada $d$:
+
+
+$$d = (s \cdot k - e) \cdot r^{-1} \pmod n$$
+
+### 3. EC-KCDSA: Reutilización de Nonce ($k$)
+
+A diferencia de ECDSA, en EC-KCDSA la ecuación de la firma para la componente $s$ se define como:
+
+
+$$s = d \cdot (k - \bar{w}) \pmod n$$
+
+
+Donde $\bar{w}$ deriva del hash del mensaje y de la componente $r$.
+
+Si se reutiliza $k$, el valor $r$ será constante, pero los valores $\bar{w}_1$ y $\bar{w}_2$ serán diferentes. Tenemos dos ecuaciones:
+
+
+$$s_1 = d \cdot (k - \bar{w}_1) \pmod n$$
+
+$$s_2 = d \cdot (k - \bar{w}_2) \pmod n$$
+
+Al restar ambas ecuaciones, el nonce $k$ desaparece por completo, permitiendo recuperar la clave privada **directamente**, sin necesidad de calcular $k$ en el proceso:
+
+
+$$s_1 - s_2 = d \cdot (\bar{w}_2 - \bar{w}_1) \pmod n$$
+
+$$d = (s_1 - s_2) \cdot (\bar{w}_2 - \bar{w}_1)^{-1} \pmod n$$
+
+### 4. EC-KCDSA: Filtración de Nonce ($k$)
+
+Si el atacante logra comprometer el valor de $k$ utilizado para una firma $(r, s)$ de un mensaje conocido, la recuperación de la clave privada es directa. A partir de la ecuación base:
+
+
+$$s = d \cdot (k - \bar{w}) \pmod n$$
+
+Despejamos $d$:
+
+
+$$d = s \cdot (k - \bar{w})^{-1} \pmod n$$
+
+
+> Proyecto con fines educativos.

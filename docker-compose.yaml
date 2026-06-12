@@ -1,0 +1,32 @@
+services:
+  ecdsa-reuse:
+    build:
+      context: .
+      dockerfile: ./challenge_ecdsa_reuse/Dockerfile
+    ports:
+      - "2001:1337"
+    restart: always
+
+  ecdsa-leak:
+    build:
+      context: .
+      dockerfile: ./challenge_ecdsa_leak/Dockerfile
+    ports:
+      - "2002:1337"
+    restart: always
+
+  kcdsa-reuse:
+    build:
+      context: .
+      dockerfile: ./challenge_kcdsa_reuse/Dockerfile
+    ports:
+      - "2003:1337"
+    restart: always
+
+  kcdsa-leak:
+    build:
+      context: .
+      dockerfile: ./challenge_kcdsa_leak/Dockerfile
+    ports:
+      - "2004:1337"
+    restart: always
