@@ -45,7 +45,7 @@ python3 exploit.py
 
 ```
 
-## 🦠 Explicación de las Vulnerabilidades
+## Explicación de las Vulnerabilidades
 
 En los algoritmos de firma de curvas elípticas, el valor $k$ (nonce o secreto efímero) debe ser un número aleatorio, impredecible y **estrictamente de un solo uso**. Si estas reglas se rompen, la seguridad de todo el esquema colapsa. El orden del subgrupo de la curva se denota como $n$, y todas las operaciones se realizan en módulo $n$.
 
