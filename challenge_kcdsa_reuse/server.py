@@ -1,4 +1,5 @@
 import sys
+import secrets
 from ec import SECP256K1
 import ec_kcdsa
 
@@ -7,7 +8,7 @@ sys.stdout.reconfigure(line_buffering=True)
 FLAG = "FLAG{papu_de_que_trabajo_hablan}"
 curva = SECP256K1
 d, Q, h_cert = ec_kcdsa.keygen(curva)
-FIXED_K = 0x9999999999999999999999999999999999999999999999999999999999999999
+FIXED_K = secrets.randbelow(n - 1) + 1 # K Fijado en todas las firmas
 
 def main():
     print("=== ORÁCULO EC-KCDSA: REUTILIZACIÓN DE NONCE ===")

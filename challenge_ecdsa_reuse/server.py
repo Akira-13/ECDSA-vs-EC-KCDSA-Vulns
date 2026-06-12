@@ -1,4 +1,5 @@
 import sys
+import secrets
 from ec import SECP256K1
 import ecdsa
 
@@ -8,7 +9,7 @@ FLAG = "FLAG{todo_por_correo}"
 curva = SECP256K1
 d, Q = ecdsa.keygen(curva)
 # Forzamos un k estático para demostrar la vulnerabilidad por reutilización
-FIXED_K = 0x5555555555555555555555555555555555555555555555555555555555555555
+FIXED_K = secrets.randbelow(curva.n - 1) + 1
 
 def main():
     print("=== ORÁCULO ECDSA: REUTILIZACIÓN DE NONCE ===")
